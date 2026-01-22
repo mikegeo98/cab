@@ -1,63 +1,87 @@
-**Benchmark AWS Redshift**
+# CAB Benchmark Runner
 
-1. Overview of required steps
-The CAB benchmark follows roughly these phases:
+A set of JavaScript programs for running and analyzing the CAB benchmark on cloud data warehouses.
 
-**Setup phase (`load_setup.js`):**
-- Creates the top‐level database (if it doesn’t exist).
-- Spins up N schemas or N databases depending on how you want to isolate tenants.
-- Creates all tables (TPC-H table definitions) and any necessary file‐format objects/stages for bulk loading from S3.
+## Overview
 
-**Data‐load phase (`load_worker.js`):**
-- For each “tenant” database (or schema), generates the scale-specific TPC-H datasets.
-- Stages the data or directly streams from S3.
-- Copies data into tables (`COPY INTO`) in parallel.
+The CAB benchmark follows these phases:
 
-**Query‐stream generation (built into common scripts):**
-- The benchmark generator (CAB‐gen) produces five “patterns” of query arrival times (cold start, spiky, uniform, etc.) and templates all 21 TPC-H queries.
-- Each tenant (schema/database) has its own “stream” of queries.
+### Setup Phase (`load_setup.js`)
+- Creates the top-level database (if it doesn't exist)
+- Spins up N schemas or databases depending on tenant isolation strategy
+- Creates all tables (TPC-H definitions) and file-format objects/stages for bulk loading from S3
 
-**Query‐execution phase (`query_stream_executer.js` or similar):**
-- Launches one JavaScript worker per tenant. Each worker:
-  - Opens a connection to its schema.
-  - Submits queries at the designated arrival times, respecting per-tenant rate (CAB factor).
-  - Measures per-query latency.
-  - Writes results (timestamps, query IDs, latencies) to a local JSON/CSV file.
+### Data Load Phase (`load_worker.js`)
+- For each tenant database/schema, generates scale-specific TPC-H datasets
+- Stages data or streams directly from S3
+- Copies data into tables (`COPY INTO`) in parallel
 
+### Query Stream Generation
+- The benchmark generator (CAB-gen) produces five patterns of query arrival times (cold start, spiky, uniform, etc.)
+- Templates all 21 TPC-H queries
+- Each tenant has its own stream of queries
+
+### Query Execution Phase (`query_stream_executer.js`)
+- Launches one JavaScript worker per tenant
+- Opens a connection to its schema
+- Submits queries at designated arrival times, respecting per-tenant rate (CAB factor)
+- Measures per-query latency
+- Writes results (timestamps, query IDs, latencies) to a local CSV file
+
+### Aggregation Phase (`result_combinator.js`)
+- Collects all per-tenant raw result files
+- Merges them into a single CSV containing: tenant_id, query_id, start_time, end_time, latency_ms, etc.
+- Produces summary statistics: p50, p90, p99 latencies; total run time; multi-tenant interference metrics
+
+---
 
 ## Environment Variables
 
 ### AWS Credentials (required for all AWS services)
 ```bash
-export AWS_ACCESS_KEY_ID=''
-export AWS_SECRET_ACCESS_KEY=''
-export AWS_REGION=''
+export AWS_ACCESS_KEY_ID='...'
+export AWS_SECRET_ACCESS_KEY='...'
+export AWS_REGION='us-east-1'  # Must include region number (e.g., us-east-1, not us-east)
 ```
 
 ### S3 (required for data loading)
 ```bash
-export S3_BUCKET=''  # e.g., 'my-bucket/cab-data'
+export S3_BUCKET='my-bucket/cab-data'
 ```
 
-### Athena
+---
+
+## Athena Configuration
+
 ```bash
-export ATHENA_S3_OUTPUT=''  # S3 path for query results, e.g., 's3://my-bucket/athena-output'
-export ATHENA_DATABASE=''   # Athena database name
+export ATHENA_S3_OUTPUT='s3://my-bucket/athena-output'  # S3 path for query results
+export ATHENA_DATABASE='cab'                            # Glue/Athena database name
 ```
 
-### Redshift
+**Prerequisites:**
+- Athena database must exist in AWS Glue Data Catalog
+- Tables must be created (e.g., `lineitem_1`, `customer_1`, etc.)
+- S3 bucket for query results must be accessible
+
+---
+
+## Redshift Configuration (Provisioned and Serverless)
+
 ```bash
-export REDSHIFT_DATABASE=''
-export REDSHIFT_ENDPOINT=''
-export REDSHIFT_DB_USER=''
-export REDSHIFT_DB_PASSWORD=''
-export PORT=''
-export SSL=''
+export REDSHIFT_CLUSTER_IDENTIFIER='my-cluster'
+export REDSHIFT_DATABASE='dev'
+export REDSHIFT_ENDPOINT='my-cluster.xxxxx.us-east-1.redshift.amazonaws.com'
+export REDSHIFT_DB_USER='admin'
+export REDSHIFT_DB_PASSWORD='...'
+export PORT='5439'
+export SSL='true'
+export REDSHIFT_ROLE='arn:aws:iam::123456789:role/RedshiftS3Access'
 ```
 
-You might also need to add your public IP address to the allowed incoming connections of your security group.
+**Network Access:**
 
-**Aggregation phase (`result_combinator.js`):**
-- Collects all per-tenant “raw result” files.
-- Merges them into a single CSV that contains: tenant_id, query_id, start_time, end_time, latency_ms, warehouse_size, etc.
-- Produces summary statistics: p50, p90, p99 latencies; total run time; average CPU credits used; multi-tenant interference metrics; etc.
+The easiest way to run a query stream is to:
+1. Add your public IP address to the inbound rules of your security group (port 5439)
+2. Enable public access on the Redshift cluster
+
+Without public access, you'll need to configure appropriate IAM roles and VPC networking.
