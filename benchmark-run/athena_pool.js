@@ -55,10 +55,8 @@ export default class AthenaPool {
          }
 
          if (typeof (binds[i]) === "number") {
-            // result = result.replaceAll("?" + (i + 1), binds[i]);
             result = result.replaceAll(":" + (i + 1), binds[i]);
          } else if (typeof (binds[i]) === "string") {
-            // result = result.replaceAll("?" + (i + 1), "'" + binds[i] + "'");
             result = result.replaceAll(":" + (i + 1), "'" + binds[i] + "'");
          } else {
             throw new Error("unknown type for binding");

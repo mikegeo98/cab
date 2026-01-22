@@ -4,6 +4,7 @@ import BigQueryPool from './bigquery_pool.js';
 import RedshiftPool from './redshift_pool.js';
 import Common from './common.js';
 import chalk from 'chalk';
+import { BigQuery } from '@google-cloud/bigquery';
 
 const pool_concurrency = 1;
 
@@ -43,7 +44,7 @@ class LoadValidator {
 
    async ValidateTableCardinalities(path) {
       this.databases = Common.LoadDatabaseMetaInfo(path);
-      
+
       for (const database of this.databases) {
          await this._ValidateCount('region', database.database_id, 5);
          await this._ValidateCount('nation', database.database_id, 25);
@@ -78,7 +79,7 @@ class LoadValidator {
 }
 
 async function main() {
-   const worker = new LoadValidator(RedshiftPool.GetConfig());
+   const worker = new LoadValidator(BigQueryPool.GetConfig());
    await worker.ValidateTableCardinalities("query_streams");
    await worker.ValidateTableKeys("query_streams");
 

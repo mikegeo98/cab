@@ -10,13 +10,11 @@ const bucket = process.env.S3_BUCKET;
 
 export default class S3Wrapper {
    constructor() {
-    // check if connection options are defined
       if (Object.keys(connection_options).some(key => connection_options[key] == null)) {
          console.log("connection_options: " + JSON.stringify(connection_options, null, 2));
          console.log("Please define all these options :)");
          process.exit(-1);
       }
-    // check if S3 bucket is defined
       if (bucket == null) {
          console.log("s3 bucket is not specified, please set S3_BUCKET in environment.");
          process.exit(-1);
@@ -27,7 +25,6 @@ export default class S3Wrapper {
       this.bucket = bucket;
       console.log("done")
    }
-   // helper functions
    _GetS3Path(database_id, table_name, step) {
       return "csv/database_" + database_id + "/" + table_name + "_" + step + "/";
    }
@@ -44,7 +41,6 @@ export default class S3Wrapper {
       return "'s3://" + this.bucket + "/" + this._GetS3Path(database_id, table_name, step) + "'";
    }
 
-   
    async put(key, file) {
       const file_content = fs.readFileSync(file);
 

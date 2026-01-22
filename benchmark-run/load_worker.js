@@ -42,24 +42,22 @@ class LoadWorker {
       };
    }
 
-   async GetNextJob(jobId) {
+   async GetNextJob() {
       console.log(chalk.cyan("\nGetting next job ..."));
-      
       while (true) {
-         const jobs = await this.athena.RunSync("select * from jobs where status = 'open' and job_id=:1 order by job_id limit 1",[jobId]);
+         const jobs = await this.snowflake.RunSync("select * from jobs where status = 'open' limit 1");
          if (jobs.rows.length === 0) {
             console.log("No more open jobs -> done");
             return null
          }
          const job = jobs.rows[0];
-         console.log(job.job_id);
-         return job
-         // const update_res = await this.athena.RunSync("update jobs set status = 'running' where job_id = :1 and status = 'open'", [job.job_id]);
-         // const updated_rows = update_res.rows[0]['number of rows updated'];
-         // if (updated_rows != null && updated_rows === 1) {
-         //    console.log(job);
-         //    return job;
-         // }
+
+         const update_res = await this.snowflake.RunSync("update jobs set status = 'running' where job_id = ? and status = 'open'", [job.JOB_ID]);
+         const updated_rows = update_res.rows[0]['number of rows updated'];
+         if (updated_rows != null && updated_rows === 1) {
+            console.log(job);
+            return job;
+         }
       }
    }
 
@@ -136,22 +134,22 @@ class LoadWorker {
       }
 
       // Create
-      const args = ["-s", job.scale_factor, "-T", this._TableNameToDbGenTableCode(job.table_name), "-f", "-b", dbgen_folder + "/dists.dss"];
-      if (job.chunk_count > 1) {
-         args.push("-C", job.chunk_count, "-S", job.step);
+      const args = ["-s", job.SCALE_FACTOR, "-T", this._TableNameToDbGenTableCode(job.TABLE_NAME), "-f", "-b", dbgen_folder + "/dists.dss"];
+      if (job.CHUNK_COUNT > 1) {
+         args.push("-C", job.CHUNK_COUNT, "-S", job.STEP);
       }
       console.log(chalk.cyan("\nGenerating table chunk ..."));
       process.env.DSS_PATH = csv_directory;
       await this._RunCommand(dbgen_path, args);
       this.stats.dbgen_total += (Date.now() - start);
-      this.stats.dbgen.push({time: Date.now() - start, table_name: job.table_name});
+      this.stats.dbgen.push({time: Date.now() - start, table_name: job.TABLE_NAME});
 
       // Set permissions, because sometimes they are not correct :/
       await this._RunCommand("chmod", ["u+rw", this._GetGeneratedFileName(job)]);
    }
 
    _GetGeneratedFileName(job) {
-      return process.env.PWD + "/" + csv_directory + "/" + job.table_name + ".tbl" + (job.chunk_count > 1 ? "." + job.step : "");
+      return process.env.PWD + "/" + csv_directory + "/" + job.TABLE_NAME + ".tbl" + (job.CHUNK_COUNT > 1 ? "." + job.STEP : "");
    }
 
    async CompressCsvFile(job) {
@@ -163,7 +161,7 @@ class LoadWorker {
       console.log("zstd " + args.join(" "));
       await this._RunCommand("zstd", args);
       this.stats.compress_total += (Date.now() - start);
-      this.stats.compress.push({time: Date.now() - start, table_name: job.table_name});
+      this.stats.compress.push({time: Date.now() - start, table_name: job.TABLE_NAME});
    }
 
    _GetCompressedFileName(job) {
@@ -173,21 +171,21 @@ class LoadWorker {
    async UploadCsvFileS3(job) {
       const start = Date.now();
       const generated_file = this._GetCompressedFileName(job);
-      const s3_file = this.s3_wrapper._GetS3FileName(job.database_id, job.table_name, job.step);
+      const s3_file = this.s3_wrapper._GetS3FileName(job.DATABASE_ID, job.TABLE_NAME, job.STEP);
       console.log(chalk.cyan("\nUpload csv file ..."));
       console.log(generated_file + " -> " + s3_file);
       await this.s3_wrapper.put(s3_file, generated_file);
       console.log("success.");
       this.stats.upload_total += (Date.now() - start);
-      this.stats.upload.push({time: Date.now() - start, table_name: job.table_name});
+      this.stats.upload.push({time: Date.now() - start, table_name: job.TABLE_NAME});
    }
 
    async DoPipelinedUpload(job) {
       const start = Date.now();
 
-      const dbgen_args = ["-s", job.scale_factor, "-T", this._TableNameToDbGenTableCode(job.table_name), "-f", "-b", dbgen_folder + "/dists.dss"];
-      if (job.chunk_count > 1) {
-         dbgen_args.push("-C", job.chunk_count, "-S", job.step);
+      const dbgen_args = ["-s", job.SCALE_FACTOR, "-T", this._TableNameToDbGenTableCode(job.TABLE_NAME), "-f", "-b", dbgen_folder + "/dists.dss"];
+      if (job.CHUNK_COUNT > 1) {
+         dbgen_args.push("-C", job.CHUNK_COUNT, "-S", job.STEP);
       }
 
       // Generate script
@@ -197,7 +195,7 @@ class LoadWorker {
          "export DSS_PATH=" + csv_directory + "\n" +
          "mkfifo " + this._GetGeneratedFileName(job) + "\n" +
          "./" + dbgen_path + " " + dbgen_args.join(" ") + " &\n" +
-         "zstd " + this._GetGeneratedFileName(job) + " --stdout | aws s3 cp - " + this.s3_wrapper._GetS3AccessPath(job.database_id, job.table_name, job.step) + "\n";
+         "zstd " + this._GetGeneratedFileName(job) + " --stdout | aws s3 cp - " + this.s3_wrapper._GetS3AccessPath(job.DATABASE_ID, job.TABLE_NAME, job.STEP) + "\n";
 
       // Write script to file
       if (!fs.existsSync(csv_directory)) {
@@ -246,18 +244,18 @@ class LoadWorker {
       external_table_dlls.supplier = "CREATE EXTERNAL TABLE tmp_supplier_:database_id:_:step: (s_suppkey bigint, s_name varchar(25), s_address varchar(40), s_nationkey bigint, s_phone varchar(15), s_acctbal decimal(12,2), s_comment varchar(101)) ROW FORMAT DELIMITED FIELDS TERMINATED BY '|' LOCATION :s3_location:;"
 
       // Create external table to copy from
-      const s3_location = this.s3_wrapper._GetS3AccessPathFolder(job.database_id, job.table_name, job.step);
-      const external_table_dll = external_table_dlls[job.table_name].replaceAll(":database_id:", job.database_id).replaceAll(":step:", job.step).replaceAll(":s3_location:", s3_location);
+      const s3_location = this.s3_wrapper._GetS3AccessPathFolder(job.DATABASE_ID, job.TABLE_NAME, job.STEP);
+      const external_table_dll = external_table_dlls[job.TABLE_NAME].replaceAll(":database_id:", job.DATABASE_ID).replaceAll(":step:", job.STEP).replaceAll(":s3_location:", s3_location);
       console.log("athena:> " + external_table_dll);
       await this.athena.RunSync(external_table_dll);
 
       // Copy over
-      const copy_dml = "insert into " + job.table_name + "_" + job.database_id + " (select * from tmp_" + job.table_name + "_" + job.database_id + "_" + job.step + ");"
+      const copy_dml = "insert into " + job.TABLE_NAME + "_" + job.DATABASE_ID + " (select * from tmp_" + job.TABLE_NAME + "_" + job.DATABASE_ID + "_" + job.STEP + ");"
       console.log("athena:> " + copy_dml);
       await this.athena.RunSync(copy_dml);
 
       // Delete external table
-      const drop_dll = "drop table tmp_" + job.table_name + "_" + job.database_id + "_" + job.step + ";";
+      const drop_dll = "drop table tmp_" + job.TABLE_NAME + "_" + job.DATABASE_ID + "_" + job.STEP + ";";
       console.log("athena:> " + drop_dll);
       await this.athena.RunSync(drop_dll);
 
@@ -271,8 +269,8 @@ class LoadWorker {
       const options = "ZSTD DELIMITER '|'";
       // const s3_options = "CREDENTIALS" + process.env.REDSHIFT_ROLE + "";
       const s3_options = "CREDENTIALS 'aws_iam_role=arn:aws:iam::962670871107:role/redshift-s3-access'"
-      const table_db_id = job.table_name + "_" + job.database_id;
-      const file_name = this.s3_wrapper._GetS3AccessPath(job.database_id, job.table_name, job.step);
+      const table_db_id = job.TABLE_NAME + "_" + job.DATABASE_ID;
+      const file_name = this.s3_wrapper._GetS3AccessPath(job.DATABASE_ID, job.TABLE_NAME, job.STEP);
       const command = "COPY " + table_db_id + " FROM " + file_name + " " + s3_options + " " + options + ";";
       console.log(chalk.cyan("\nCopy into Redshift table ..."));
       console.log(command);
@@ -283,7 +281,7 @@ class LoadWorker {
       //    process.exit();
       // }
       this.stats.copy_redshift_total += (Date.now() - start);
-      this.stats.copy_redshift.push({time: Date.now() - start, table_name: job.table_name});
+      this.stats.copy_redshift.push({time: Date.now() - start, TABLE_NAME: job.TABLE_NAME});
    }
 
    async CopyIntoTableBigQuery(job) {
@@ -306,10 +304,10 @@ class LoadWorker {
 
    async MarkJobAsDone(job) {
       console.log(chalk.cyan("\nMarking job as complete ..."));
-      // const res = await this.athena.RunSync("update jobs set status = 'complete' where job_id = ? and status = 'running'", [job.JOB_ID]);
-      // if (res.rows.length !== 1 || res.rows[0]['number of rows updated'] !== 1) {
-      //    throw new Error("Unexpected result on job completion: " + JSON.stringify(res));
-      // }
+      const res = await this.snowflake.RunSync("update jobs set status = 'complete' where job_id = ? and status = 'running'", [job.JOB_ID]);
+      if (res.rows.length !== 1 || res.rows[0]['number of rows updated'] !== 1) {
+         throw new Error("Unexpected result on job completion: " + JSON.stringify(res));
+      }
       console.log("done");
    }
 
@@ -331,20 +329,18 @@ class LoadWorker {
 async function main() {
    const worker = new LoadWorker();
 
-   let index = 0;
    let job;
-   while (job = await worker.GetNextJob(index)) {
+   while (job = await worker.GetNextJob()) {
       await worker.CreateCsvFile(job);
-      await worker.CompressCsvFile(job);
-      await worker.UploadCsvFileS3(job);
+      // await worker.CompressCsvFile(job);
+      // await worker.UploadCsvFileS3(job);
 
       // await worker.CopyIntoTableSnowflake(job);
       // await worker.CopyIntoTableAthena(job);
-      // await worker.CopyIntoTableBigQuery(job);
-      await worker.CopyIntoTableRedshift(job);
+      await worker.CopyIntoTableBigQuery(job);
+      // await worker.CopyIntoTableRedshift(job);
       await worker.MarkJobAsDone(job);
       await worker.CleanTmpFiles(job);
-      index++; // Increment the index
    }
 
    console.log(chalk.cyan("\nNormal program exit: done :)"));

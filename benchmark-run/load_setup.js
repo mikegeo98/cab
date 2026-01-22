@@ -15,11 +15,12 @@ const redshift_pool_concurrency= 5;
 class LoadSetupManager {
    constructor() {
       this.query_streams = [];
-      // this.snowflake = new SnowflakePool(snowflake_pool_concurrency, false);
+      this.snowflake = new SnowflakePool(snowflake_pool_concurrency, false);
       // this.athena = new AthenaPool(athena_pool_concurrency, false);
-      this.redshift = new RedshiftPool(redshift_pool_concurrency, false)
       // this.big_query_pool = new BigQueryPool(big_query_pool_concurrency, false);
+      // this.redshift = new RedshiftPool(redshift_pool_concurrency, false)
    }
+      
 
    // Read query_streams from disk and gather meta info for all databases
    LoadDatabases(path) {
@@ -104,7 +105,7 @@ class LoadSetupManager {
    async CreateJobTablesAthena() {
       console.log(chalk.cyan("\nCreating load jobs ..."));
 
-      await this.athena.RunPrintSync("create table jobs(job_id int, database_id int, scale_factor int, table_name string, chunk_count int, step int, status string) LOCATION 's3://cloudglide/jobs' TBLPROPERTIES ('table_type'='ICEBERG');");
+      await this.athena.RunPrintSync("create table jobs(job_id int, database_id int, scale_factor int, table_name string, chunk_count int, step int, status string) LOCATION ''s3://[TODO s3 bucket]/jobs' TBLPROPERTIES ('table_type'='ICEBERG');");
       await this.athena.Wait();
    }
 
@@ -115,6 +116,7 @@ class LoadSetupManager {
       await this.redshift.Wait();
    }
    
+   // Inserts "load-tasks" into the Jobs table. Each task populates a chunk of a table
    async CreateLoadJobs() {
       let job_id = 1;
 
@@ -124,15 +126,15 @@ class LoadSetupManager {
          return Array.from(Array(relation_chunks).keys()).map(k => [job_id++, database_id, scale_factor, relation_name, relation_chunks, k + 1, 'open']);
       }
 
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => [job_id++, db.database_id, db.scale_factor, 'region', 1, 1, 'open']));
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => [job_id++, db.database_id, db.scale_factor, 'nation', 1, 1, 'open']));
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.023, 'customer')).flat());
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.725, 'lineitem')).flat());
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.164, 'orders')).flat());
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.023, 'part')).flat());
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.113, 'partsupp')).flat());
-      this.athena.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.001, 'supplier')).flat());
-      await this.athena.Wait();
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => [job_id++, db.database_id, db.scale_factor, 'region', 1, 1, 'open']));
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => [job_id++, db.database_id, db.scale_factor, 'nation', 1, 1, 'open']));
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.023, 'customer')).flat());
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.725, 'lineitem')).flat());
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.164, 'orders')).flat());
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.023, 'part')).flat());
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.113, 'partsupp')).flat());
+      this.snowflake.RunPrintSync("insert into Jobs values(?, ?, ?, ?, ?, ?, ?);", this.query_streams.map(db => split_table_into_chunks(db.database_id, db.scale_factor, 0.001, 'supplier')).flat());
+      await this.snowflake.Wait();
    }
    
    async CreateLoadJobsAthena() {
